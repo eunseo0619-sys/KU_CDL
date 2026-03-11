@@ -13,41 +13,54 @@ DOC_FILES = {
 }
 
 
-def extract_paragraphs(path: str) -> list[dict]:
-    """워드 파일에서 문단 목록을 추출합니다."""
+def extract_chunks(path: str) -> list[dict]:
+    """워드 파일에서 의미 단위 청크를 추출합니다."""
     doc = Document(path)
-    paragraphs = []
+    chunks = []
     current_heading = ""
+    para_buffer = []
+
+    def flush_buffer():
+        if para_buffer:
+            text = "\n".join(para_buffer)
+            if len(text.strip()) >= 15:
+                chunks.append({"text": text, "heading": current_heading})
+            para_buffer.clear()
 
     for para in doc.paragraphs:
         text = para.text.strip()
         if not text:
             continue
-        # 제목 스타일이면 현재 섹션 제목으로 저장
+
         if para.style.name.startswith("Heading"):
+            flush_buffer()
             current_heading = text
         else:
-            paragraphs.append({
-                "text": text,
-                "heading": current_heading,
-            })
+            para_buffer.append(text)
+            # 버퍼가 충분히 쌓이면 청크로 저장
+            if len("\n".join(para_buffer)) >= 80:
+                flush_buffer()
 
-    # 표(table) 내용도 추출
+    flush_buffer()
+
+    # 표는 전체를 하나의 청크로
     for table in doc.tables:
+        rows = []
         for row in table.rows:
             cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
             if cells:
-                paragraphs.append({
-                    "text": " | ".join(cells),
-                    "heading": current_heading,
-                })
+                rows.append(" | ".join(cells))
+        if rows:
+            table_text = "\n".join(rows)
+            if len(table_text) >= 15:
+                chunks.append({"text": table_text, "heading": current_heading})
 
-    return paragraphs
+    return chunks
 
 
 def load_documents() -> dict:
     """두 워드 파일을 읽어 검색 가능한 형태로 반환합니다."""
-    all_chunks = []   # {"source", "heading", "text"}
+    all_chunks = []
     missing = []
 
     for label, filename in DOC_FILES.items():
@@ -55,12 +68,11 @@ def load_documents() -> dict:
         if not os.path.exists(filepath):
             missing.append(filename)
             continue
-        paras = extract_paragraphs(filepath)
-        for p in paras:
+        for chunk in extract_chunks(filepath):
             all_chunks.append({
                 "source": label,
-                "heading": p["heading"],
-                "text": p["text"],
+                "heading": chunk["heading"],
+                "text": chunk["text"],
             })
 
     if not all_chunks:
@@ -68,7 +80,7 @@ def load_documents() -> dict:
 
     texts = [c["text"] for c in all_chunks]
     vectorizer = TfidfVectorizer(
-        analyzer="char_wb",   # 한국어에 유리한 문자 n-gram
+        analyzer="char_wb",
         ngram_range=(2, 4),
         max_features=20000,
     )
@@ -83,7 +95,7 @@ def load_documents() -> dict:
 
 
 def search_documents(docs: dict, query: str, top_k: int = 5) -> list[dict]:
-    """질문과 가장 관련 있는 문단을 반환합니다."""
+    """질문과 가장 관련 있는 청크를 반환합니다."""
     if not docs["chunks"]:
         return []
 
@@ -93,7 +105,7 @@ def search_documents(docs: dict, query: str, top_k: int = 5) -> list[dict]:
 
     results = []
     for idx in top_indices:
-        if scores[idx] < 0.05:   # 유사도가 너무 낮으면 제외
+        if scores[idx] < 0.05:
             continue
         chunk = docs["chunks"][idx]
         results.append({
