@@ -41,7 +41,7 @@ def generate_answer(query: str, results: list[dict]) -> str:
 
     client = get_client()
     response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+        model="claude-3-5-haiku-20241022",
         max_tokens=1024,
         system=(
             "당신은 고려대학교 CDL(창의학습관) 도서관 근로장학생을 돕는 AI 도우미입니다. "
